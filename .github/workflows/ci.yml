@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Restore
+        run: dotnet restore
+
+      - name: Build
+        run: dotnet build -c Release --no-restore
+
+      - name: Test (with coverage)
+        run: |
+          dotnet test -c Release --no-build \
+            --filter "FullyQualifiedName!~IntegrationTests" \
+            --logger "trx;LogFileName=test-results.trx" \
+            --results-directory TestResults/ \
+            --collect:"XPlat Code Coverage"
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: TestResults/
+          retention-days: 14
+
+      - name: Coverage report + 35% gate
+        run: |
+          dotnet tool restore
+          dotnet tool run reportgenerator \
+            -reports:'TestResults/**/coverage.cobertura.xml' \
+            -targetdir:coverage-report \
+            -reporttypes:'TextSummary;MarkdownSummary'
+          cat coverage-report/Summary.txt
+          # 35% gate: this gate runs UNIT tests only (measured 36.3% line coverage
+          # at assembly time). The bulk of this domain's surface is raw Npgsql +
+          # Dapper I/O that only integration tests against a real PostgreSQL can
+          # exercise — the source repo reached ~70% only by including its
+          # [RequiresDocker] integration suite. Raise this gate if integration
+          # coverage is ever folded into CI.
+          line_pct=$(awk '/^[[:space:]]*Line coverage:/ {gsub("%","",$NF); print $NF; exit}' coverage-report/Summary.txt)
+          echo "Line coverage: ${line_pct}%"
+          awk -v c="$line_pct" 'BEGIN { exit (c+0 >= 35) ? 0 : 1 }'
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage-report/
+          retention-days: 14
