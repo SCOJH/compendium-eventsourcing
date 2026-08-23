@@ -297,7 +297,19 @@ public sealed class PostgreSqlStreamingEventStore : IStreamingEventStore, IAsync
                     {
                         _logger.LogWarning("Failed to deserialize event {EventId} of type {EventType}: {Error}",
                             rawEvent.EventId, rawEvent.EventType, deserializationResult.Error.Message);
+
+                        // Skipping the event here would let a projection checkpoint advance past
+                        // the gap, and a position once advanced is never replayed. Stopping the
+                        // stream is the only way to keep the omission recoverable.
+                        throw new InvalidOperationException(
+                            $"Event {rawEvent.EventId} of type '{rawEvent.EventType}' in stream " +
+                            $"'{rawEvent.StreamId}' could not be deserialized: {deserializationResult.Error.Message}");
                     }
+                }
+                catch (InvalidOperationException)
+                {
+                    // The stop signal raised just above: it must reach the consumer.
+                    throw;
                 }
                 catch (Exception ex)
                 {
