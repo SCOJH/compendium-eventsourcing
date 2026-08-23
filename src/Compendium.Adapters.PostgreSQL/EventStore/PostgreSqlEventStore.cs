@@ -29,6 +29,12 @@ namespace Compendium.Adapters.PostgreSQL.EventStore;
 /// </summary>
 public sealed class PostgreSqlEventStore : IEventStore, IAsyncDisposable
 {
+    /// <summary>
+    /// Error code raised by the deserializer when the stored type is unknown to the event type registry.
+    /// Distinguishes "this binary does not know that type" from an unreadable payload.
+    /// </summary>
+    private const string TypeNotWhitelistedErrorCode = "EventDeserializer.TypeNotWhitelisted";
+
     private readonly PostgreSqlOptions _options;
     private readonly IEventDeserializer _eventDeserializer;
     private readonly ILogger<PostgreSqlEventStore> _logger;
@@ -647,11 +653,17 @@ public sealed class PostgreSqlEventStore : IEventStore, IAsyncDisposable
 
             foreach (var storedEvent in storedEvents)
             {
-                var domainEvent = DeserializeEvent(storedEvent.event_data, storedEvent.event_type);
-                if (domainEvent != null)
+                var deserializationResult = DeserializeEvent(
+                    (string)storedEvent.event_data,
+                    (string)storedEvent.event_type,
+                    aggregateId);
+
+                if (deserializationResult.IsFailure)
                 {
-                    domainEvents.Add(domainEvent);
+                    return deserializationResult.Error;
                 }
+
+                domainEvents.Add(deserializationResult.Value);
             }
 
             _logger.LogDebug(
@@ -713,11 +725,17 @@ public sealed class PostgreSqlEventStore : IEventStore, IAsyncDisposable
 
             foreach (var storedEvent in storedEvents)
             {
-                var domainEvent = DeserializeEvent(storedEvent.event_data, storedEvent.event_type);
-                if (domainEvent != null)
+                var deserializationResult = DeserializeEvent(
+                    (string)storedEvent.event_data,
+                    (string)storedEvent.event_type,
+                    aggregateId);
+
+                if (deserializationResult.IsFailure)
                 {
-                    domainEvents.Add(domainEvent);
+                    return deserializationResult.Error;
                 }
+
+                domainEvents.Add(deserializationResult.Value);
             }
 
             return Result.Success<IReadOnlyList<IDomainEvent>>(domainEvents);
@@ -798,11 +816,17 @@ public sealed class PostgreSqlEventStore : IEventStore, IAsyncDisposable
 
             foreach (var storedEvent in storedEvents)
             {
-                var domainEvent = DeserializeEvent(storedEvent.event_data, storedEvent.event_type);
-                if (domainEvent != null)
+                var deserializationResult = DeserializeEvent(
+                    (string)storedEvent.event_data,
+                    (string)storedEvent.event_type,
+                    aggregateId);
+
+                if (deserializationResult.IsFailure)
                 {
-                    domainEvents.Add(domainEvent);
+                    return deserializationResult.Error;
                 }
+
+                domainEvents.Add(deserializationResult.Value);
             }
 
             _logger.LogDebug(
@@ -871,11 +895,17 @@ public sealed class PostgreSqlEventStore : IEventStore, IAsyncDisposable
 
             foreach (var storedEvent in storedEvents)
             {
-                var domainEvent = DeserializeEvent(storedEvent.event_data, storedEvent.event_type);
-                if (domainEvent != null)
+                var deserializationResult = DeserializeEvent(
+                    (string)storedEvent.event_data,
+                    (string)storedEvent.event_type,
+                    aggregateId);
+
+                if (deserializationResult.IsFailure)
                 {
-                    domainEvents.Add(domainEvent);
+                    return deserializationResult.Error;
                 }
+
+                domainEvents.Add(deserializationResult.Value);
             }
 
             return Result.Success<IReadOnlyList<IDomainEvent>>(domainEvents);
@@ -928,14 +958,17 @@ public sealed class PostgreSqlEventStore : IEventStore, IAsyncDisposable
                 return Error.NotFound("EventStore.NoEvents", $"No events found for aggregate {aggregateId}");
             }
 
-            var lastEvent = DeserializeEvent(storedEvent.event_data, storedEvent.event_type);
+            var deserializationResult = DeserializeEvent(
+                (string)storedEvent.event_data,
+                (string)storedEvent.event_type,
+                aggregateId);
 
-            if (lastEvent == null)
+            if (deserializationResult.IsFailure)
             {
-                return Error.Failure("EventStore.DeserializationFailed", "Failed to deserialize last event");
+                return deserializationResult.Error;
             }
 
-            return Result.Success<IDomainEvent>(lastEvent);
+            return Result.Success<IDomainEvent>(deserializationResult.Value);
         }
         catch (Exception ex)
         {
@@ -1173,9 +1206,14 @@ public sealed class PostgreSqlEventStore : IEventStore, IAsyncDisposable
     /// Securely deserializes a stored event back to a domain event using the whitelisted type registry.
     /// </summary>
     /// <param name="eventData">The serialized event data.</param>
-    /// <param name="eventType">The event type name.</param>
-    /// <returns>The deserialized domain event, or null if deserialization fails or type is not whitelisted.</returns>
-    private IDomainEvent? DeserializeEvent(string eventData, string eventType)
+    /// <param name="eventType">The event type name, as stored in the event_type column.</param>
+    /// <param name="streamId">The stream the event belongs to, used to qualify the failure.</param>
+    /// <returns>
+    /// The deserialized domain event, or a failure carrying why it could not be read:
+    /// <c>EventStore.EventTypeUnresolved</c> when the type is unknown to the registry,
+    /// <c>EventStore.DeserializationFailed</c> when the payload itself cannot be read.
+    /// </returns>
+    private Result<IDomainEvent> DeserializeEvent(string eventData, string eventType, string streamId)
     {
         try
         {
@@ -1185,15 +1223,27 @@ public sealed class PostgreSqlEventStore : IEventStore, IAsyncDisposable
             {
                 _logger.LogWarning("Failed to securely deserialize event of type {EventType}: {Error}",
                     eventType, result.Error.Message);
-                return null;
+
+                if (result.Error.Code == TypeNotWhitelistedErrorCode)
+                {
+                    return Error.Failure(
+                        "EventStore.EventTypeUnresolved",
+                        $"Event type '{eventType}' of stream '{streamId}' could not be resolved: {result.Error.Message}");
+                }
+
+                return Error.Failure(
+                    "EventStore.DeserializationFailed",
+                    $"Failed to deserialize event of type '{eventType}' of stream '{streamId}': {result.Error.Message}");
             }
 
-            return result.Value;
+            return Result.Success<IDomainEvent>(result.Value);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Unexpected error deserializing event of type {EventType}", eventType);
-            return null;
+            return Error.Failure(
+                "EventStore.DeserializationFailed",
+                $"Failed to deserialize event of type '{eventType}' of stream '{streamId}': {ex.Message}");
         }
     }
 
