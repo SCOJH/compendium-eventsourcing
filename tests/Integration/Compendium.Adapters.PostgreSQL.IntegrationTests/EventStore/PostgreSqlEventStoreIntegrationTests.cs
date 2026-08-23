@@ -484,6 +484,171 @@ public sealed class PostgreSqlEventStoreIntegrationTests : IAsyncLifetime
     }
 
     /// <summary>
+    /// Appends two events to a fresh stream, so a read can be observed on known content.
+    /// </summary>
+    private async Task AppendTwoEventsAsync(string aggregateId)
+    {
+        var events = new List<IDomainEvent>
+        {
+            new TestEvent
+            {
+                EventId = Guid.NewGuid(),
+                AggregateId = aggregateId,
+                AggregateType = "TestAggregate",
+                OccurredOn = DateTimeOffset.UtcNow,
+                AggregateVersion = 1,
+                Data = "First event"
+            },
+            new TestEvent
+            {
+                EventId = Guid.NewGuid(),
+                AggregateId = aggregateId,
+                AggregateType = "TestAggregate",
+                OccurredOn = DateTimeOffset.UtcNow,
+                AggregateVersion = 2,
+                Data = "Second event"
+            }
+        };
+
+        var appendResult = await _eventStore!.AppendEventsAsync(aggregateId, events, 0);
+        appendResult.IsSuccess.Should().BeTrue();
+    }
+
+    /// <summary>
+    /// Builds a second store over the same table whose deserializer always fails with the given
+    /// error. Reading through it exercises the failure path without disturbing the shared
+    /// deserializer the other tests rely on.
+    /// </summary>
+    private PostgreSqlEventStore StoreThatFailsToDeserialize(Error error)
+    {
+        var deserializer = Substitute.For<IEventDeserializer>();
+        deserializer.TryDeserializeEvent(Arg.Any<string>(), Arg.Any<string>())
+            .Returns(Result.Failure<IDomainEvent>(error));
+
+        return new PostgreSqlEventStore(_options!, deserializer, Substitute.For<ILogger<PostgreSqlEventStore>>());
+    }
+
+    private static Error TypeNotWhitelisted() =>
+        Error.Validation("EventDeserializer.TypeNotWhitelisted", "Event type is not whitelisted");
+
+    [RequiresDockerFact]
+    public async Task GetEventsAsync_WhenTypeIsNotResolved_FailsInsteadOfReturningATruncatedStream()
+    {
+        // Arrange
+        var aggregateId = Guid.NewGuid().ToString();
+        await AppendTwoEventsAsync(aggregateId);
+        await using var reader = StoreThatFailsToDeserialize(TypeNotWhitelisted());
+
+        // Act
+        var result = await reader.GetEventsAsync(aggregateId);
+
+        // Assert — a stream that cannot be read whole is not a success carrying fewer events.
+        result.IsSuccess.Should().BeFalse();
+        result.Error.Code.Should().Be("EventStore.EventTypeUnresolved");
+        result.Error.Message.Should().Contain(aggregateId);
+        result.Error.Message.Should().Contain(nameof(TestEvent));
+    }
+
+    [RequiresDockerFact]
+    public async Task GetEventsAsyncFromVersion_WhenTypeIsNotResolved_Fails()
+    {
+        // Arrange
+        var aggregateId = Guid.NewGuid().ToString();
+        await AppendTwoEventsAsync(aggregateId);
+        await using var reader = StoreThatFailsToDeserialize(TypeNotWhitelisted());
+
+        // Act
+        var result = await reader.GetEventsAsync(aggregateId, 0L);
+
+        // Assert
+        result.IsSuccess.Should().BeFalse();
+        result.Error.Code.Should().Be("EventStore.EventTypeUnresolved");
+    }
+
+    [RequiresDockerFact]
+    public async Task GetEventsAsyncPaged_WhenTypeIsNotResolved_Fails()
+    {
+        // Arrange
+        var aggregateId = Guid.NewGuid().ToString();
+        await AppendTwoEventsAsync(aggregateId);
+        await using var reader = StoreThatFailsToDeserialize(TypeNotWhitelisted());
+
+        // Act
+        var result = await reader.GetEventsAsync(aggregateId, 0, 10);
+
+        // Assert
+        result.IsSuccess.Should().BeFalse();
+        result.Error.Code.Should().Be("EventStore.EventTypeUnresolved");
+    }
+
+    [RequiresDockerFact]
+    public async Task GetEventsInRangeAsync_WhenTypeIsNotResolved_Fails()
+    {
+        // Arrange
+        var aggregateId = Guid.NewGuid().ToString();
+        await AppendTwoEventsAsync(aggregateId);
+        await using var reader = StoreThatFailsToDeserialize(TypeNotWhitelisted());
+
+        // Act
+        var result = await reader.GetEventsInRangeAsync(aggregateId, 1L, 2L);
+
+        // Assert
+        result.IsSuccess.Should().BeFalse();
+        result.Error.Code.Should().Be("EventStore.EventTypeUnresolved");
+    }
+
+    [RequiresDockerFact]
+    public async Task GetLastEventAsync_WhenTypeIsNotResolved_NamesTheCauseInsteadOfBeingGeneric()
+    {
+        // Arrange
+        var aggregateId = Guid.NewGuid().ToString();
+        await AppendTwoEventsAsync(aggregateId);
+        await using var reader = StoreThatFailsToDeserialize(TypeNotWhitelisted());
+
+        // Act
+        var result = await reader.GetLastEventAsync(aggregateId);
+
+        // Assert — this method already failed on this case; only the code and message improve.
+        result.IsSuccess.Should().BeFalse();
+        result.Error.Code.Should().Be("EventStore.EventTypeUnresolved");
+        result.Error.Message.Should().NotBe("Failed to deserialize last event");
+    }
+
+    [RequiresDockerFact]
+    public async Task GetEventsAsync_WhenPayloadCannotBeRead_IsDistinguishedFromAnUnresolvedType()
+    {
+        // Arrange — a known type whose payload is unreadable is a corrupted row, not a
+        // deployment problem, and an operator must tell the two apart without reading logs.
+        var aggregateId = Guid.NewGuid().ToString();
+        await AppendTwoEventsAsync(aggregateId);
+        await using var reader = StoreThatFailsToDeserialize(
+            Error.Failure("EventDeserializer.InvalidPayload", "Unexpected end of JSON input"));
+
+        // Act
+        var result = await reader.GetEventsAsync(aggregateId);
+
+        // Assert
+        result.IsSuccess.Should().BeFalse();
+        result.Error.Code.Should().Be("EventStore.DeserializationFailed");
+        result.Error.Message.Should().Contain("Unexpected end of JSON input");
+    }
+
+    [RequiresDockerFact]
+    public async Task GetEventsAsync_WhenEveryTypeResolves_StillReturnsTheWholeStream()
+    {
+        // Arrange — the nominal path must be untouched by the failure propagation.
+        var aggregateId = Guid.NewGuid().ToString();
+        await AppendTwoEventsAsync(aggregateId);
+
+        // Act
+        var result = await _eventStore!.GetEventsAsync(aggregateId);
+
+        // Assert
+        result.IsSuccess.Should().BeTrue();
+        result.Value.Should().HaveCount(2);
+    }
+
+    /// <summary>
     /// Test event class for integration testing.
     /// </summary>
     private sealed class TestEvent : IDomainEvent
