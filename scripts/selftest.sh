@@ -57,7 +57,7 @@ IFS=$'\t' read -r _ discovered total executed passed failed notexec code <<< "$r
 
 if [ "$mode" = "list" ]; then
     echo "The following Tests are available:"
-    for i in $(seq 1 "$discovered"); do echo "    $assembly.Test$i"; done
+    i=1; while [ "$i" -le "$discovered" ]; do echo "    $assembly.Test$i"; i=$((i + 1)); done
     exit 0
 fi
 

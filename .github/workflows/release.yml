@@ -28,10 +28,17 @@ jobs:
       - name: Build
         run: dotnet build -c Release --no-restore
 
-      - name: Test (unit only)
+      # NEX-CI-49 — `--require-integration` et non le mode `auto` de la CI :
+      # une publication ne doit pas partir sur des tests qui n'ont pas tourné.
+      # Si Docker manque sur le runner, ce job échoue au lieu de publier un
+      # paquet dont la moitié des garanties n'a jamais été vérifiée.
+      - name: Test
         run: |
-          dotnet test -c Release --no-build \
-            --filter "FullyQualifiedName!~IntegrationTests&FullyQualifiedName!~LoadTests"
+          bash scripts/run-tests.sh \
+            --configuration Release \
+            --no-build \
+            --results-directory TestResults \
+            --require-integration
 
       - name: Pack adapter packages (excluding tests)
         run: |
