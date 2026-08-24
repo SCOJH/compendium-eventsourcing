@@ -151,6 +151,13 @@ else
     else nope "a stale .trx is not credited to a lane that did not run" "$out"; fi
 fi
 
+# --- a vacuous discovery is fatal, not a free pass -------------------------
+write_config "$UNIT	0	0	0	0	0	0	0" "$INTEG	0	0	0	0	0	0	0"
+out=$(STUB_DOCKER_OK=1 run_tests r7); rc=$?
+if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -q "0 tests discovered"; then
+    ok "discovering zero tests in a test project is fatal"
+else nope "discovering zero tests in a test project is fatal" "$out"; fi
+
 echo "test-summary.sh"
 
 summary() {  # summary <dir> <discovered-tsv-content> [budget-content]
@@ -209,6 +216,13 @@ out=$(summary s6 "$INTEG	28" ""); rc=$?
 if printf '%s' "$out" | grep -q "| 4 | 8 |"; then
     ok "skipped (4) and never reached (8) are separate columns"
 else nope "skipped (4) and never reached (8) are separate columns" "$out"; fi
+
+# an empty discovery file is not a pass
+mkdir -p "$tmp/s8"; : > "$tmp/s8/discovered.tsv"; : > "$tmp/s8/budget.tsv"
+out=$("$repo_root/scripts/test-summary.sh" --results-directory "$tmp/s8" --budget "$tmp/s8/budget.tsv" 2>&1); rc=$?
+if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -q "empty report is not a pass"; then
+    ok "an empty discovery file fails instead of printing a blank green table"
+else nope "an empty discovery file fails instead of printing a blank green table" "$out"; fi
 
 # the run summary is appended to the GitHub step summary
 trx s7 "$UNIT" 199 199 199 0 0

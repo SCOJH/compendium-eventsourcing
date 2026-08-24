@@ -140,6 +140,11 @@ while IFS=$'\t' read -r assembly discovered; do
     total_never_run=$(( total_never_run + never_run ))
 done < "$discovered_file"
 
+if [ -z "$rows" ]; then
+    echo "test-summary: $discovered_file lists no assembly — an empty report is not a pass." >&2
+    exit 1
+fi
+
 report=$(cat <<REPORT
 ## Tests executed, by assembly
 

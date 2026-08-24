@@ -156,10 +156,20 @@ for csproj in "${projects[@]}"; do
         printf '%s\n' "$listing" | tail -20 | sed 's/^/    | /' >&2
         exit 1
     fi
+    if ! printf '%s\n' "$listing" | grep -q "The following Tests are available"; then
+        echo "  $assembly: discovery produced no test list." >&2
+        echo "  A discovery count of 0 would make every later check vacuous, so this is fatal." >&2
+        printf '%s\n' "$listing" | tail -20 | sed 's/^/    | /' >&2
+        exit 1
+    fi
     count=$(printf '%s\n' "$listing" | awk '
         /The following Tests are available/ { inlist = 1; next }
         inlist && /^[[:space:]]+[^[:space:]]/ { n++ }
         END { print n + 0 }')
+    if [ "$count" -eq 0 ]; then
+        echo "  $assembly: 0 tests discovered in a test project — refusing to treat that as nothing to check." >&2
+        exit 1
+    fi
     printf '%s\t%s\n' "$assembly" "$count" >> "$discovered_file"
     echo "  $assembly: $count"
 done
