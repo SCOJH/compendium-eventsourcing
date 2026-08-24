@@ -132,6 +132,25 @@ if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -q "require-integration"; then
     ok "--require-integration refuses to run without Docker"
 else nope "--require-integration refuses to run without Docker" "$out"; fi
 
+# --- --skip-integration is honest about what it did not run ----------------
+write_config "$green_unit" "$INTEG	28	28	24	24	0	4	0"
+out=$(STUB_DOCKER_OK=1 run_tests r5 --skip-integration); rc=$?
+if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -q "0 / 28"; then
+    ok "--skip-integration reports 0 / 28 and does not go green"
+else nope "--skip-integration reports 0 / 28 and does not go green" "$out"; fi
+
+# --- a stale .trx cannot be credited to a lane that did not run ------------
+write_config "$green_unit" "$INTEG	28	28	24	24	0	4	0"
+STUB_DOCKER_OK=1 run_tests r6 >/dev/null 2>&1 || true
+if [ ! -f "$tmp/r6/$INTEG.trx" ]; then
+    nope "stale .trx: setup failed, no first-run .trx to go stale"
+else
+    out=$(STUB_DOCKER_OK=0 run_tests r6); rc=$?
+    if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -q "0 / 28"; then
+        ok "a stale .trx is not credited to a lane that did not run"
+    else nope "a stale .trx is not credited to a lane that did not run" "$out"; fi
+fi
+
 echo "test-summary.sh"
 
 summary() {  # summary <dir> <discovered-tsv-content> [budget-content]

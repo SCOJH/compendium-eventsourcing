@@ -47,7 +47,7 @@ both cases.
 ```bash
 bash scripts/run-tests.sh                       # build, run everything, report
 bash scripts/run-tests.sh --no-build            # after a `dotnet build`
-bash scripts/run-tests.sh --skip-integration    # unit lane only, offline
+bash scripts/run-tests.sh --skip-integration    # unit lane only, offline (see below)
 bash scripts/run-tests.sh --require-integration # fail if Docker is missing
 bash scripts/selftest.sh                        # test the harness itself
 ```
@@ -94,6 +94,12 @@ PR summary.
 If this repository ever decides *not* to run its integration lane on PRs, that
 decision goes in this file, with its reason, and the number of tests it costs is
 printed on every run.
+
+The same rule applies to the escape hatches. `--skip-integration` and a missing
+Docker both leave 28 tests unrun against a budget of 4, so both exit non-zero.
+Skipping the lane is allowed; calling the result green is not. Use the flag to
+get a fast unit loop offline, and read the exit code as "you did not run
+everything" rather than as a failure.
 
 ## Wiring it into CI
 

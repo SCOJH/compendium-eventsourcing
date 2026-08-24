@@ -49,7 +49,9 @@ dotnet build -c Release
 # what it found.
 bash scripts/run-tests.sh --no-build
 
-# Unit lane only — no Docker, no network.
+# Unit lane only — no Docker, no network. Reports the integration tests as
+# never-run and exits non-zero: skipping them is allowed, calling it green
+# is not.
 bash scripts/run-tests.sh --no-build --skip-integration
 ```
 

@@ -174,6 +174,13 @@ done
 coverage_args=()
 [ "$collect_coverage" -eq 1 ] && coverage_args=(--collect:"XPlat Code Coverage")
 
+# Drop any .trx left by an earlier run into the same directory. Without this, a
+# lane that does not run would be credited with the previous run's results —
+# which is the very thing this script exists to make impossible.
+for csproj in "${projects[@]}"; do
+    rm -f "$results_dir/$(basename "$csproj" .csproj).trx"
+done
+
 tests_failed=0
 echo
 for csproj in "${projects[@]}"; do
