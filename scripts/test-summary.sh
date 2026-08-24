@@ -73,11 +73,11 @@ budget_for() {  # budget_for <assembly> -> "<max>\t<reason>", default "0\t"
         awk -F'\t' -v a="$assembly" '
             /^[[:space:]]*#/ { next }
             NF == 0 { next }
-            $1 == a { printf "%s\t%s", ($2 == "" ? 0 : $2), $3; found = 1; exit }
-            END { if (!found) printf "0\t" }
+            $1 == a { printf "%s\t%s\n", ($2 == "" ? 0 : $2), $3; found = 1; exit }
+            END { if (!found) print "0\t" }
         ' "$budget_file"
     else
-        printf '0\t'
+        printf '0\t\n'
     fi
 }
 
@@ -94,7 +94,7 @@ while IFS=$'\t' read -r assembly discovered; do
 
     executed=0; passed=0; failed=0; skipped=0
     if [ -f "$trx" ]; then
-        counters=$(grep -o '<Counters[^>]*>' "$trx" | head -1)
+        counters=$(grep -o '<Counters[^>]*>' "$trx" | head -1) || true
         if [ -z "$counters" ]; then
             echo "test-summary: $trx has no <Counters> element — refusing to guess." >&2
             exit 1
@@ -110,7 +110,7 @@ while IFS=$'\t' read -r assembly discovered; do
     not_reached=$(( never_run - skipped ))
     [ "$not_reached" -lt 0 ] && not_reached=0
 
-    IFS=$'\t' read -r budget reason < <(budget_for "$assembly")
+    IFS=$'\t' read -r budget reason < <(budget_for "$assembly") || true
     budget=${budget:-0}
 
     if [ "$never_run" -gt "$budget" ]; then
@@ -151,7 +151,7 @@ REPORT
 )
 
 if [ -n "$notes" ]; then
-    report+=$'\n'"### Tests that did not run"$'\n\n'"$notes"
+    report+=$'\n\n'"### Tests that did not run"$'\n\n'"$notes"
 fi
 
 if [ "$gate_failed" -ne 0 ]; then
