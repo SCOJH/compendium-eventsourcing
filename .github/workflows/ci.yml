@@ -29,13 +29,40 @@ jobs:
       - name: Build
         run: dotnet build -c Release --no-restore
 
-      - name: Test (with coverage)
+      # NEX-CI-49 — deux défauts distincts corrigés d'un coup, et le second
+      # n'avait été vu par personne.
+      #
+      # (1) `--filter "FullyQualifiedName!~IntegrationTests"` excluait la suite
+      #     d'intégration PAR SON NOM. Les 6 fichiers de `tests/Integration/`
+      #     n'ont jamais tourné ici, et le vert des PR venait uniquement de
+      #     l'assembly unitaire. Le 2026-08-23, sept tests écrits pour prouver
+      #     les critères d'acceptation d'un P0 (#385 — la troncature silencieuse
+      #     de flux) sont passés en revue et ont été fusionnés sans avoir été
+      #     exécutés une seule fois.
+      #
+      # (2) `--logger "trx;LogFileName=test-results.trx"` donnait le MÊME nom de
+      #     fichier à tous les projets de test. `dotnet test` sur la solution
+      #     lance un vstest par projet, et le dernier écrasait les précédents.
+      #     Le seul `.trx` archivé du run de cette PR porte `total="0"` et nomme
+      #     l'assembly d'intégration — celui que le filtre avait vidé. La seule
+      #     trace machine du run disait donc zéro test exécuté.
+      #
+      # `run-tests.sh` remplace les deux : un `.trx` par assembly, et un budget
+      # de tests non exécutés (`tests/unrun-budget.tsv`, défaut ZÉRO) qui rougit
+      # quand un test existe sans tourner. Voir docs/TESTING.md.
+      - name: Test
         run: |
-          dotnet test -c Release --no-build \
-            --filter "FullyQualifiedName!~IntegrationTests" \
-            --logger "trx;LogFileName=test-results.trx" \
-            --results-directory TestResults/ \
-            --collect:"XPlat Code Coverage"
+          bash scripts/run-tests.sh \
+            --configuration Release \
+            --no-build \
+            --results-directory TestResults
+
+      # Le harnais lui-même est testé, avec un `dotnet` bouchonné : il tourne
+      # sans .NET ni Docker, en quelques secondes. Un garde qu'on n'éprouve pas
+      # est une promesse — et celui-ci garde la porte par laquelle deux défauts
+      # sont déjà passés.
+      - name: Self-test the test harness
+        run: bash scripts/selftest.sh
 
       - name: Upload test results
         if: always()

@@ -1,0 +1,14 @@
+# Never-run budget — how many tests each assembly is allowed to leave unrun.
+#
+# Columns, tab-separated:  <assembly>  <max-unrun>  <reason>
+#
+# "Unrun" is discovered minus executed: tests skipped by the runner plus tests
+# the runner never reached. Any assembly absent from this file has a budget of
+# 0 — every test it contains must run, or CI goes red.
+#
+# This is a ceiling, not a waiver. Adding a test that cannot run reddens CI
+# until someone raises the number here and says why in this column. Lowering
+# it is always safe; scripts/test-summary.sh points out when reality is better
+# than the budget.
+
+Compendium.Adapters.PostgreSQL.IntegrationTests	4	4 tests carry an explicit Skip= on their [RequiresDockerFact] (flaky event seeding, and one timing-sensitive perf assertion). Each skip states its reason at the test.
