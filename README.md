@@ -44,12 +44,16 @@ tests/
 ```bash
 dotnet build -c Release
 
-# Unit tests — no Docker required.
-dotnet test -c Release --filter "FullyQualifiedName!~IntegrationTests"
+# Everything: unit + integration. Docker must be running for the integration
+# lane (Testcontainers spins up PostgreSQL); the script probes for it and says
+# what it found.
+bash scripts/run-tests.sh --no-build
 
-# Integration tests — Docker must be running (Testcontainers spins up PostgreSQL).
-dotnet test -c Release --filter "FullyQualifiedName~IntegrationTests"
+# Unit lane only — no Docker, no network.
+bash scripts/run-tests.sh --no-build --skip-integration
 ```
+
+Each run prints, per assembly, how many of the tests it contains actually ran. Tests that did not run are a number in the summary, capped per assembly by `tests/unrun-budget.tsv` — not a silence behind a green check. See [`docs/TESTING.md`](docs/TESTING.md).
 
 CI gates on unit-test line coverage (≥ 35% — the raw Npgsql/Dapper I/O surface is only exercised meaningfully by the integration suite; see the comment in `.github/workflows/ci.yml`).
 
