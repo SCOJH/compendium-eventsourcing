@@ -5,10 +5,10 @@
 
   <!-- Compendium framework — pin to a published NuGet version. Update via Renovate. -->
   <ItemGroup>
-    <PackageVersion Include="Compendium.Abstractions" Version="1.0.5-preview.1" />
-    <PackageVersion Include="Compendium.Core" Version="1.0.5-preview.1" />
-    <PackageVersion Include="Compendium.Infrastructure" Version="1.0.5-preview.1" />
-    <PackageVersion Include="Compendium.Multitenancy" Version="1.0.5-preview.1" />
+    <PackageVersion Include="Compendium.Abstractions" Version="1.0.5-preview.4" />
+    <PackageVersion Include="Compendium.Core" Version="1.0.5-preview.4" />
+    <PackageVersion Include="Compendium.Infrastructure" Version="1.0.5-preview.4" />
+    <PackageVersion Include="Compendium.Multitenancy" Version="1.0.5-preview.4" />
   </ItemGroup>
 
   <!-- Build-time tooling -->
