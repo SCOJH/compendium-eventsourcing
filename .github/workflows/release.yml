@@ -78,8 +78,20 @@ jobs:
           NUGET_API_KEY: ${{ steps.nuget-login.outputs.NUGET_API_KEY || secrets.NUGET_API_KEY }}
         run: |
           if [ -z "$NUGET_API_KEY" ]; then
-            echo "::warning::Pas de credential nuget.org (OIDC KO et NUGET_API_KEY vide) — publish nuget.org skippe."
-            exit 0
+            # Ce bloc rendait `::warning::` puis `exit 0` : la release restait
+            # VERTE, la Release GitHub se créait, et rien n'atteignait
+            # nuget.org. Depuis le 2026-06-25, soit 72 jours, chaque release de
+            # ce dépôt a menti de cette façon — personne ne lit un warning dans
+            # un job vert. Une release qui ne publie pas est une release en
+            # échec ; elle doit le dire.
+            echo "::error::Aucun credential nuget.org — rien n'a été publié."
+            echo "::error::OIDC (Trusted Publishing) a échoué ET le secret NUGET_API_KEY est vide."
+            echo "::error::Pour réparer, au choix :"
+            echo "::error::  1. poser le secret NUGET_API_KEY sur SCOJH/compendium-eventsourcing"
+            echo "::error::     (SCOJH/Compendium en porte déjà un, valide, depuis le 2026-04-24) ;"
+            echo "::error::  2. ou déclarer sur nuget.org une policy Trusted Publishing pour"
+            echo "::error::     SCOJH/compendium-eventsourcing + release.yml, owner sachahennaut."
+            exit 1
           fi
           dotnet nuget push "artifacts/*.nupkg" \
             --api-key "$NUGET_API_KEY" \
