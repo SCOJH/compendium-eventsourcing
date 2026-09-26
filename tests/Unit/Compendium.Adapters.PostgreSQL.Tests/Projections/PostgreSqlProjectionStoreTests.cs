@@ -8,7 +8,7 @@
 using Compendium.Adapters.PostgreSQL.Configuration;
 using Compendium.Adapters.PostgreSQL.Projections;
 using Compendium.Infrastructure.Projections;
-using FluentAssertions;
+using AwesomeAssertions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using NSubstitute;

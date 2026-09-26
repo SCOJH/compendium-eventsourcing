@@ -6,7 +6,7 @@
 // -----------------------------------------------------------------------
 
 using Compendium.Adapters.PostgreSQL.Configuration;
-using FluentAssertions;
+using AwesomeAssertions;
 using Npgsql;
 
 namespace Compendium.Adapters.PostgreSQL.Tests.Configuration;

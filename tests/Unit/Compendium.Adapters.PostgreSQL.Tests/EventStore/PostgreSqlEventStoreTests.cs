@@ -8,7 +8,7 @@
 using Compendium.Adapters.PostgreSQL.Configuration;
 using Compendium.Adapters.PostgreSQL.EventStore;
 using Compendium.Core.EventSourcing;
-using FluentAssertions;
+using AwesomeAssertions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using NSubstitute;

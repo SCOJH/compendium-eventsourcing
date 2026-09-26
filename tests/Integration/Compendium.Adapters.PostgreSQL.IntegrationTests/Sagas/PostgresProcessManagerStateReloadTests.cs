@@ -12,7 +12,7 @@ using Compendium.Adapters.PostgreSQL.Sagas;
 using Compendium.Application.Sagas.ProcessManagers;
 using Compendium.Core.Results;
 using Compendium.IntegrationTests.Fixtures;
-using FluentAssertions;
+using AwesomeAssertions;
 using Microsoft.Extensions.Options;
 using Xunit;
 

@@ -9,7 +9,7 @@ using Compendium.Abstractions.Sagas.Common;
 using Compendium.Abstractions.Sagas.ProcessManagers;
 using Compendium.Adapters.PostgreSQL.Configuration;
 using Compendium.Adapters.PostgreSQL.Sagas;
-using FluentAssertions;
+using AwesomeAssertions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using NSubstitute;
