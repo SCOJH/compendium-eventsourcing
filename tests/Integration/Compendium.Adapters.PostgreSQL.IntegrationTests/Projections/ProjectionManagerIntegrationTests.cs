@@ -15,7 +15,7 @@ using Compendium.Core.Domain.Events;
 using Compendium.Core.EventSourcing;
 using Compendium.Core.Results;
 using Compendium.Infrastructure.Projections;
-using FluentAssertions;
+using AwesomeAssertions;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Testcontainers.PostgreSql;
@@ -241,7 +241,7 @@ public class ProjectionManagerIntegrationTests : IAsyncLifetime
         await Task.WhenAll(concurrentTasks);
 
         // Assert
-        maxConcurrent.Should().BeLessOrEqualTo(2, "Should respect MaxConcurrentRebuilds setting");
+        maxConcurrent.Should().BeLessThanOrEqualTo(2, "Should respect MaxConcurrentRebuilds setting");
     }
 
     [RequiresDockerFact]

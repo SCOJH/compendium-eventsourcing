@@ -13,7 +13,7 @@ using Compendium.Adapters.PostgreSQL.Projections;
 using Compendium.Core.EventSourcing;
 using Compendium.Infrastructure.EventSourcing;
 using Compendium.Infrastructure.Projections;
-using FluentAssertions;
+using AwesomeAssertions;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 

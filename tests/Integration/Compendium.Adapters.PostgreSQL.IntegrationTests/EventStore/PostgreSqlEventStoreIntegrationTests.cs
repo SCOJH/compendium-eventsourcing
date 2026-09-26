@@ -14,7 +14,7 @@ using Compendium.Core.EventSourcing;
 using Compendium.Core.Results;
 using Compendium.Multitenancy;
 using Dapper;
-using FluentAssertions;
+using AwesomeAssertions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using NSubstitute;
