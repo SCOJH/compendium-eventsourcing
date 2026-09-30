@@ -239,41 +239,46 @@ public sealed class PostgreSqlEventStore : IEventStore, IAsyncDisposable
                     metadata, tenant_id, created_at, created_by, event_id, occurred_on
                 ) FROM STDIN (FORMAT BINARY)";
 
-                using var writer = await connection.BeginBinaryImportAsync(copyCommand, cancellationToken).ConfigureAwait(false);
-
                 var now = DateTimeOffset.UtcNow;
                 var tenantId = _tenantContext?.TenantId;
                 var version = currentVersion;
                 var rowsWritten = 0;
 
-                foreach (var domainEvent in eventList)
+                // The importer is disposed before the transaction commits: Npgsql keeps the connection
+                // in its COPY state until the importer is disposed, so a commit issued while it is
+                // still alive fails with "The connection is already in state 'Copy'" and the whole
+                // batch is rolled back. Every batch of 500 events or more used to fail that way.
+                await using (var writer = await connection.BeginBinaryImportAsync(copyCommand, cancellationToken).ConfigureAwait(false))
                 {
-                    version++;
-
-                    var metadata = new Dictionary<string, object>
+                    foreach (var domainEvent in eventList)
                     {
-                        ["CorrelationId"] = Guid.NewGuid().ToString(),
-                        ["Timestamp"] = now.Ticks,
-                        ["EventVersion"] = version
-                    };
+                        version++;
 
-                    await writer.StartRowAsync(cancellationToken).ConfigureAwait(false);
-                    await writer.WriteAsync(aggregateId, NpgsqlTypes.NpgsqlDbType.Varchar, cancellationToken).ConfigureAwait(false);
-                    await writer.WriteAsync(domainEvent.AggregateType, NpgsqlTypes.NpgsqlDbType.Varchar, cancellationToken).ConfigureAwait(false);
-                    await writer.WriteAsync(version, NpgsqlTypes.NpgsqlDbType.Bigint, cancellationToken).ConfigureAwait(false);
-                    await writer.WriteAsync(version, NpgsqlTypes.NpgsqlDbType.Bigint, cancellationToken).ConfigureAwait(false); // stream_position
-                    await writer.WriteAsync(domainEvent.GetType().AssemblyQualifiedName!, NpgsqlTypes.NpgsqlDbType.Varchar, cancellationToken).ConfigureAwait(false);
-                    await writer.WriteAsync(JsonSerializer.Serialize(domainEvent, domainEvent.GetType(), _jsonOptions), NpgsqlTypes.NpgsqlDbType.Jsonb, cancellationToken).ConfigureAwait(false);
-                    await writer.WriteAsync(JsonSerializer.Serialize(metadata, _jsonOptions), NpgsqlTypes.NpgsqlDbType.Jsonb, cancellationToken).ConfigureAwait(false);
-                    await writer.WriteAsync(tenantId ?? (object)DBNull.Value, NpgsqlTypes.NpgsqlDbType.Varchar, cancellationToken).ConfigureAwait(false);
-                    await writer.WriteAsync(now, NpgsqlTypes.NpgsqlDbType.TimestampTz, cancellationToken).ConfigureAwait(false);
-                    await writer.WriteAsync("system", NpgsqlTypes.NpgsqlDbType.Varchar, cancellationToken).ConfigureAwait(false);
-                    await writer.WriteAsync(domainEvent.EventId, NpgsqlTypes.NpgsqlDbType.Uuid, cancellationToken).ConfigureAwait(false);
-                    await writer.WriteAsync(domainEvent.OccurredOn, NpgsqlTypes.NpgsqlDbType.TimestampTz, cancellationToken).ConfigureAwait(false);
-                    rowsWritten++;
+                        var metadata = new Dictionary<string, object>
+                        {
+                            ["CorrelationId"] = Guid.NewGuid().ToString(),
+                            ["Timestamp"] = now.Ticks,
+                            ["EventVersion"] = version
+                        };
+
+                        await writer.StartRowAsync(cancellationToken).ConfigureAwait(false);
+                        await writer.WriteAsync(aggregateId, NpgsqlTypes.NpgsqlDbType.Varchar, cancellationToken).ConfigureAwait(false);
+                        await writer.WriteAsync(domainEvent.AggregateType, NpgsqlTypes.NpgsqlDbType.Varchar, cancellationToken).ConfigureAwait(false);
+                        await writer.WriteAsync(version, NpgsqlTypes.NpgsqlDbType.Bigint, cancellationToken).ConfigureAwait(false);
+                        await writer.WriteAsync(version, NpgsqlTypes.NpgsqlDbType.Bigint, cancellationToken).ConfigureAwait(false); // stream_position
+                        await writer.WriteAsync(domainEvent.GetType().AssemblyQualifiedName!, NpgsqlTypes.NpgsqlDbType.Varchar, cancellationToken).ConfigureAwait(false);
+                        await writer.WriteAsync(JsonSerializer.Serialize(domainEvent, domainEvent.GetType(), _jsonOptions), NpgsqlTypes.NpgsqlDbType.Jsonb, cancellationToken).ConfigureAwait(false);
+                        await writer.WriteAsync(JsonSerializer.Serialize(metadata, _jsonOptions), NpgsqlTypes.NpgsqlDbType.Jsonb, cancellationToken).ConfigureAwait(false);
+                        await writer.WriteAsync(tenantId ?? (object)DBNull.Value, NpgsqlTypes.NpgsqlDbType.Varchar, cancellationToken).ConfigureAwait(false);
+                        await writer.WriteAsync(now, NpgsqlTypes.NpgsqlDbType.TimestampTz, cancellationToken).ConfigureAwait(false);
+                        await writer.WriteAsync("system", NpgsqlTypes.NpgsqlDbType.Varchar, cancellationToken).ConfigureAwait(false);
+                        await writer.WriteAsync(domainEvent.EventId, NpgsqlTypes.NpgsqlDbType.Uuid, cancellationToken).ConfigureAwait(false);
+                        await writer.WriteAsync(domainEvent.OccurredOn, NpgsqlTypes.NpgsqlDbType.TimestampTz, cancellationToken).ConfigureAwait(false);
+                        rowsWritten++;
+                    }
+
+                    await writer.CompleteAsync(cancellationToken).ConfigureAwait(false);
                 }
-
-                await writer.CompleteAsync(cancellationToken).ConfigureAwait(false);
 
                 // Verify all rows were written
                 if (rowsWritten != eventList.Count)
