@@ -40,6 +40,7 @@ public sealed class PostgreSqlEventStore : IEventStore, IAsyncDisposable
     private readonly ILogger<PostgreSqlEventStore> _logger;
     private readonly ITenantContext? _tenantContext;
     private readonly Infrastructure.Observability.IMetrics? _metrics;
+    private readonly IEventTypeRegistry? _eventTypeRegistry;
     private readonly JsonSerializerOptions _jsonOptions;
     private readonly SemaphoreSlim _connectionSemaphore;
     private readonly string _enhancedConnectionString;
@@ -53,18 +54,30 @@ public sealed class PostgreSqlEventStore : IEventStore, IAsyncDisposable
     /// <param name="logger">The logger instance.</param>
     /// <param name="tenantContext">The tenant context for multi-tenancy support.</param>
     /// <param name="metrics">Optional metrics collector for connection pooling instrumentation.</param>
+    /// <param name="eventTypeRegistry">
+    /// The event type registry that names written events. It is asked for the logical name of each
+    /// appended event (<see cref="IEventTypeRegistry.GetLogicalName(Type)"/>): the value of its
+    /// <c>EventTypeName</c> attribute when it carries one, its assembly qualified name otherwise.
+    /// When it is not supplied, events are stamped with their assembly qualified name — the
+    /// behaviour that predates logical names, byte for byte — and a warning says so once.
+    /// <c>AddPostgreSqlEventStore</c> always registers one, so this fallback is only reachable by
+    /// constructing the store by hand. It is the last parameter so that no existing positional
+    /// call changes meaning.
+    /// </param>
     public PostgreSqlEventStore(
         IOptions<PostgreSqlOptions> options,
         IEventDeserializer eventDeserializer,
         ILogger<PostgreSqlEventStore> logger,
         ITenantContext? tenantContext = null,
-        Infrastructure.Observability.IMetrics? metrics = null)
+        Infrastructure.Observability.IMetrics? metrics = null,
+        IEventTypeRegistry? eventTypeRegistry = null)
     {
         _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
         _eventDeserializer = eventDeserializer ?? throw new ArgumentNullException(nameof(eventDeserializer));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _tenantContext = tenantContext;
         _metrics = metrics;
+        _eventTypeRegistry = eventTypeRegistry;
 
         if (string.IsNullOrWhiteSpace(_options.ConnectionString))
         {
@@ -76,6 +89,13 @@ public sealed class PostgreSqlEventStore : IEventStore, IAsyncDisposable
         if (!isValid)
         {
             throw new ArgumentException($"Invalid PostgreSQL configuration: {errorMessage}", nameof(options));
+        }
+
+        if (_eventTypeRegistry is null)
+        {
+            _logger.LogWarning(
+                "PostgreSQL EventStore constructed without an {Registry}: appended events will be stamped with their assembly qualified name, not their logical name",
+                nameof(IEventTypeRegistry));
         }
 
         // Build enhanced connection string with pooling parameters
@@ -266,7 +286,7 @@ public sealed class PostgreSqlEventStore : IEventStore, IAsyncDisposable
                         await writer.WriteAsync(domainEvent.AggregateType, NpgsqlTypes.NpgsqlDbType.Varchar, cancellationToken).ConfigureAwait(false);
                         await writer.WriteAsync(version, NpgsqlTypes.NpgsqlDbType.Bigint, cancellationToken).ConfigureAwait(false);
                         await writer.WriteAsync(version, NpgsqlTypes.NpgsqlDbType.Bigint, cancellationToken).ConfigureAwait(false); // stream_position
-                        await writer.WriteAsync(domainEvent.GetType().AssemblyQualifiedName!, NpgsqlTypes.NpgsqlDbType.Varchar, cancellationToken).ConfigureAwait(false);
+                        await writer.WriteAsync(ResolveEventTypeName(domainEvent.GetType()), NpgsqlTypes.NpgsqlDbType.Varchar, cancellationToken).ConfigureAwait(false);
                         await writer.WriteAsync(JsonSerializer.Serialize(domainEvent, domainEvent.GetType(), _jsonOptions), NpgsqlTypes.NpgsqlDbType.Jsonb, cancellationToken).ConfigureAwait(false);
                         await writer.WriteAsync(JsonSerializer.Serialize(metadata, _jsonOptions), NpgsqlTypes.NpgsqlDbType.Jsonb, cancellationToken).ConfigureAwait(false);
                         await writer.WriteAsync(tenantId ?? (object)DBNull.Value, NpgsqlTypes.NpgsqlDbType.Varchar, cancellationToken).ConfigureAwait(false);
@@ -396,7 +416,7 @@ public sealed class PostgreSqlEventStore : IEventStore, IAsyncDisposable
                         StreamType = domainEvent.AggregateType,
                         Version = version,
                         StreamPosition = version, // Stream position equals version
-                        EventType = domainEvent.GetType().AssemblyQualifiedName!,
+                        EventType = ResolveEventTypeName(domainEvent.GetType()),
                         EventData = JsonSerializer.Serialize(domainEvent, domainEvent.GetType(), _jsonOptions),
                         Metadata = JsonSerializer.Serialize(metadata, _jsonOptions),
                         TenantId = tenantId,
@@ -533,7 +553,7 @@ public sealed class PostgreSqlEventStore : IEventStore, IAsyncDisposable
                         parameters[baseIndex + 1] = new NpgsqlParameter($"p{baseIndex + 1}", domainEvent.AggregateType);
                         parameters[baseIndex + 2] = new NpgsqlParameter($"p{baseIndex + 2}", version);
                         parameters[baseIndex + 3] = new NpgsqlParameter($"p{baseIndex + 3}", version);
-                        parameters[baseIndex + 4] = new NpgsqlParameter($"p{baseIndex + 4}", domainEvent.GetType().AssemblyQualifiedName!);
+                        parameters[baseIndex + 4] = new NpgsqlParameter($"p{baseIndex + 4}", ResolveEventTypeName(domainEvent.GetType()));
                         parameters[baseIndex + 5] = new NpgsqlParameter($"p{baseIndex + 5}", JsonSerializer.Serialize(domainEvent, domainEvent.GetType(), _jsonOptions));
                         parameters[baseIndex + 6] = new NpgsqlParameter($"p{baseIndex + 6}", JsonSerializer.Serialize(metadata, _jsonOptions));
                         parameters[baseIndex + 7] = new NpgsqlParameter($"p{baseIndex + 7}", tenantId ?? (object)DBNull.Value);
@@ -1205,6 +1225,24 @@ public sealed class PostgreSqlEventStore : IEventStore, IAsyncDisposable
             _logger.LogError(ex, "Failed to initialize PostgreSQL event store schema");
             return Error.Failure("EventStore.SchemaInitializationFailed", ex.Message);
         }
+    }
+
+    /// <summary>
+    /// Gets the name an event is written under in the <c>event_type</c> column: the logical name
+    /// the registry gives it when a registry is available, its assembly qualified name otherwise.
+    /// The three append strategies (COPY, batched, standard) all go through here, so the stored
+    /// name depends on the event, never on the size of the batch.
+    /// </summary>
+    /// <remarks>
+    /// Only the write side changes. Rows already written under an assembly qualified name are
+    /// never rewritten: the registry indexes every registered type under both names, so a stream
+    /// mixing the two forms is read back by the same binary.
+    /// </remarks>
+    /// <param name="eventType">The runtime type of the event being appended.</param>
+    /// <returns>The name to store in the <c>event_type</c> column.</returns>
+    internal string ResolveEventTypeName(Type eventType)
+    {
+        return _eventTypeRegistry?.GetLogicalName(eventType) ?? eventType.AssemblyQualifiedName!;
     }
 
     /// <summary>
