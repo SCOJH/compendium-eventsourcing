@@ -27,6 +27,18 @@ services.AddPostgreSqlEventStore(builder.Configuration.GetSection("Postgres"));
 
 See [`docs/README.md`](docs/README.md) for full configuration (connection string, schema name, table name, BatchSize, multi-tenancy).
 
+## Stored event names
+
+The `event_type` column holds the **logical name** the `IEventTypeRegistry` gives an event
+(`GetLogicalName`): the value of its `[EventTypeName("…")]` attribute when it carries one, its
+`AssemblyQualifiedName` otherwise. An event without the attribute is therefore written exactly as
+before.
+
+Rows already written under an `AssemblyQualifiedName` are never rewritten, and stay readable: the
+registry indexes each registered type under both names, so a stream mixing the two forms is read
+back whole. `AddPostgreSqlEventStore` wires the registry in; a `PostgreSqlEventStore` constructed by
+hand without one keeps writing `AssemblyQualifiedName`s and logs a warning once.
+
 ## Versioning
 
 This package continues the version sequence of `Compendium.Adapters.PostgreSQL` originally published from the framework monorepo (last framework-published version: `1.0.0-preview.8`). The first release from this repo is `v1.0.0-preview.9`. Versions are driven by git tags via [MinVer](https://github.com/adamralph/minver) — see [`docs/RELEASE.md`](docs/RELEASE.md).
