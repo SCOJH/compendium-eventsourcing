@@ -17,6 +17,10 @@
 # there, and — whatever happens — prints the discovered/executed delta per
 # assembly. Tests that never ran are a number in the summary, not a silence.
 #
+# Since NET10-01 the test projects target net9.0 AND net10.0, so "per assembly"
+# means per (assembly, target): each pair is discovered, run and reported on its
+# own, with its own .trx.
+#
 # See docs/TESTING.md.
 
 set -euo pipefail
@@ -138,6 +142,41 @@ if [ "${#projects[@]}" -eq 0 ]; then
     exit 1
 fi
 
+# --- Which targets does each project build for? ----------------------------
+#
+# NET10-01: the test projects multi-target (net9.0;net10.0, from the root
+# Directory.Build.props), and `dotnet test` on such a project runs the assembly
+# once per target. One .trx name for both runs would let the second overwrite
+# the first, and an unframed `--list-tests` would count every test twice. So
+# every (assembly, target) pair is a lane of its own below — discovered, run and
+# reported separately — and the targets are read from the project, not assumed.
+
+frameworks_of() {  # frameworks_of <csproj> -> one target per line
+    local csproj="$1" prop value
+    for prop in TargetFrameworks TargetFramework; do
+        if ! value=$("$DOTNET" msbuild "$csproj" -nologo "-getProperty:$prop" 2>&1); then
+            echo "run-tests: reading $prop of $csproj failed:" >&2
+            printf '%s\n' "$value" | tail -5 | sed 's/^/    | /' >&2
+            return 1
+        fi
+        value=$(printf '%s' "$value" | tr -d '[:space:]')
+        if [ -n "$value" ]; then
+            printf '%s\n' "$value" | tr ';' '\n' | sed '/^$/d'
+            return 0
+        fi
+    done
+    echo "run-tests: $csproj declares neither TargetFrameworks nor TargetFramework." >&2
+    return 1
+}
+
+lanes=()   # "<csproj>\t<target>"
+for csproj in "${projects[@]}"; do
+    tfms=$(frameworks_of "$csproj") || exit 1
+    while IFS= read -r tfm; do
+        lanes+=("$csproj	$tfm")
+    done <<< "$tfms"
+done
+
 # --- Discovery: how many tests EXIST, independent of any filter ------------
 #
 # `--list-tests` enumerates what the assembly contains. The .trx written by the
@@ -148,18 +187,29 @@ fi
 
 echo
 echo "Discovering tests..."
-for csproj in "${projects[@]}"; do
+for lane in "${lanes[@]}"; do
+    IFS=$'\t' read -r csproj tfm <<< "$lane"
     assembly=$(basename "$csproj" .csproj)
     listing=""
-    if ! listing=$("$DOTNET" test "$csproj" -c "$configuration" $no_build --list-tests 2>&1); then
-        echo "  $assembly: discovery FAILED" >&2
+    if ! listing=$("$DOTNET" test "$csproj" -c "$configuration" -f "$tfm" $no_build --list-tests 2>&1); then
+        echo "  $assembly ($tfm): discovery FAILED" >&2
         printf '%s\n' "$listing" | tail -20 | sed 's/^/    | /' >&2
         exit 1
     fi
     if ! printf '%s\n' "$listing" | grep -q "The following Tests are available"; then
-        echo "  $assembly: discovery produced no test list." >&2
+        echo "  $assembly ($tfm): discovery produced no test list." >&2
         echo "  A discovery count of 0 would make every later check vacuous, so this is fatal." >&2
         printf '%s\n' "$listing" | tail -20 | sed 's/^/    | /' >&2
+        exit 1
+    fi
+    # vstest prints that marker and exits 0 even when the test host could not
+    # start. On a machine with the .NET 10 SDK but no .NET 9 runtime, the net9.0
+    # lane lists a TestPlatformException instead of tests, and the indented
+    # stack frames would be counted as tests below (4, the first time this
+    # happened). The exception is unmistakable, so it is fatal here.
+    if printf '%s\n' "$listing" | grep -q -E 'TestPlatformException|exited with error'; then
+        echo "  $assembly ($tfm): discovery FAILED — the test host could not start (is the $tfm runtime installed?)." >&2
+        printf '%s\n' "$listing" | grep -v '^   at ' | head -20 | sed 's/^/    | /' >&2
         exit 1
     fi
     count=$(printf '%s\n' "$listing" | awk '
@@ -167,19 +217,19 @@ for csproj in "${projects[@]}"; do
         inlist && /^[[:space:]]+[^[:space:]]/ { n++ }
         END { print n + 0 }')
     if [ "$count" -eq 0 ]; then
-        echo "  $assembly: 0 tests discovered in a test project — refusing to treat that as nothing to check." >&2
+        echo "  $assembly ($tfm): 0 tests discovered in a test project — refusing to treat that as nothing to check." >&2
         exit 1
     fi
-    printf '%s\t%s\n' "$assembly" "$count" >> "$discovered_file"
-    echo "  $assembly: $count"
+    printf '%s\t%s\t%s\n' "$assembly" "$tfm" "$count" >> "$discovered_file"
+    echo "  $assembly ($tfm): $count"
 done
 
 # --- Run ------------------------------------------------------------------
 #
-# One `dotnet test` per project, so every assembly gets its own .trx and the
-# report can attribute counts. A failing lane does not abort the loop: the
-# summary is worth more than a fast exit, and the exit code is carried to the
-# end.
+# One `dotnet test` per (project, target), so every assembly gets its own .trx
+# per target and the report can attribute counts. A failing lane does not abort
+# the loop: the summary is worth more than a fast exit, and the exit code is
+# carried to the end.
 
 coverage_args=()
 [ "$collect_coverage" -eq 1 ] && coverage_args=(--collect:"XPlat Code Coverage")
@@ -187,26 +237,28 @@ coverage_args=()
 # Drop any .trx left by an earlier run into the same directory. Without this, a
 # lane that does not run would be credited with the previous run's results —
 # which is the very thing this script exists to make impossible.
-for csproj in "${projects[@]}"; do
-    rm -f "$results_dir/$(basename "$csproj" .csproj).trx"
+for lane in "${lanes[@]}"; do
+    IFS=$'\t' read -r csproj tfm <<< "$lane"
+    rm -f "$results_dir/$(basename "$csproj" .csproj).$tfm.trx"
 done
 
 tests_failed=0
 echo
-for csproj in "${projects[@]}"; do
+for lane in "${lanes[@]}"; do
+    IFS=$'\t' read -r csproj tfm <<< "$lane"
     assembly=$(basename "$csproj" .csproj)
     if is_integration_project "$csproj" && [ "$run_integration" -eq 0 ]; then
-        echo "--- $assembly: not run (integration lane disabled)"
+        echo "--- $assembly ($tfm): not run (integration lane disabled)"
         continue
     fi
-    echo "--- $assembly: running"
+    echo "--- $assembly ($tfm): running"
     if ! "$DOTNET" test "$csproj" \
-            -c "$configuration" $no_build \
-            --logger "trx;LogFileName=${assembly}.trx" \
+            -c "$configuration" -f "$tfm" $no_build \
+            --logger "trx;LogFileName=${assembly}.${tfm}.trx" \
             --results-directory "$results_dir" \
             "${coverage_args[@]}"; then
         tests_failed=1
-        echo "--- $assembly: FAILED"
+        echo "--- $assembly ($tfm): FAILED"
     fi
 done
 

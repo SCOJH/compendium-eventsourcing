@@ -36,20 +36,35 @@ mkdir -p "$tmp/bin"
 
 cat > "$tmp/bin/dotnet" <<'STUB'
 #!/usr/bin/env bash
-# Stub `dotnet test`. Reads $STUB_CONFIG, a TSV of
+# Stub `dotnet`. `dotnet msbuild -getProperty:TargetFramework(s)` answers from
+# $STUB_TFMS / $STUB_TFM (default: a net9.0;net10.0 multi-target, as the real
+# projects since NET10-01). `dotnet test` reads $STUB_CONFIG, a TSV of
 #   assembly  discovered  total  executed  passed  failed  notExecuted  exit
+# and applies the assembly's row to whichever target it is run for; it refuses
+# to run without one, since an unframed run is the overwrite the harness avoids.
 set -uo pipefail
-mode="run"; results_dir="."; logger=""; proj=""
+if [ "${1:-}" = "msbuild" ]; then
+    for arg in "$@"; do
+        case "$arg" in
+            -getProperty:TargetFrameworks) printf '%s\n' "${STUB_TFMS-net9.0;net10.0}"; exit 0 ;;
+            -getProperty:TargetFramework)  printf '%s\n' "${STUB_TFM-}"; exit 0 ;;
+        esac
+    done
+    echo "stub: unsupported msbuild call: $*" >&2; exit 3
+fi
+mode="run"; results_dir="."; logger=""; proj=""; tfm=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --list-tests)          mode="list"; shift ;;
         --results-directory)   results_dir="$2"; shift 2 ;;
         --logger)              logger="$2"; shift 2 ;;
         -c|--configuration)    shift 2 ;;
+        -f|--framework)        tfm="$2"; shift 2 ;;
         *.csproj)              proj="$1"; shift ;;
         *)                     shift ;;
     esac
 done
+[ -n "$tfm" ] || { echo "stub: dotnet test called without -f <target>" >&2; exit 3; }
 assembly=$(basename "$proj" .csproj)
 row=$(awk -F'\t' -v a="$assembly" '$1 == a { print; exit }' "$STUB_CONFIG")
 [ -n "$row" ] || { echo "stub: no config row for $assembly" >&2; exit 3; }
@@ -57,6 +72,18 @@ IFS=$'\t' read -r _ discovered total executed passed failed notexec code <<< "$r
 
 if [ "$mode" = "list" ]; then
     echo "The following Tests are available:"
+    # $STUB_NO_RUNTIME names a target whose runtime is "missing": vstest then
+    # prints the marker, an exception, and exits 0 — exactly what a real SDK 10
+    # without the .NET 9 runtime does.
+    if [ "${STUB_NO_RUNTIME-}" = "$tfm" ]; then
+        echo "Microsoft.VisualStudio.TestPlatform.ObjectModel.TestPlatformException: Testhost process for source(s) '$proj' exited with error: You must install or update .NET to run this application."
+        echo "Framework: 'Microsoft.NETCore.App', version '9.0.0' (arm64)"
+        echo "   at Microsoft.VisualStudio.TestPlatform.CrossPlatEngine.Client.ProxyOperationManager.ThrowOnTestHostExited(...)"
+        echo "   at Microsoft.VisualStudio.TestPlatform.CrossPlatEngine.Client.ProxyOperationManager.SetupChannel(...)"
+        echo "   at Microsoft.VisualStudio.TestPlatform.CrossPlatEngine.Client.ProxyDiscoveryManager.InitializeDiscovery(...)"
+        echo "   at Microsoft.VisualStudio.TestPlatform.CrossPlatEngine.Client.ProxyDiscoveryManager.DiscoverTests(...)"
+        exit 0
+    fi
     i=1; while [ "$i" -le "$discovered" ]; do echo "    $assembly.Test$i"; i=$((i + 1)); done
     exit 0
 fi
@@ -118,6 +145,27 @@ else nope "a fully green run with 4 budgeted skips passes" "$out"; fi
 if printf '%s' "$out" | grep -q "docker info\` succeeded"; then ok "Docker is established by preflight, not assumed"
 else nope "Docker is established by preflight, not assumed" "$out"; fi
 
+# --- NET10-01: one lane per (assembly, target), nothing shared ---------------
+# 199 + 28 tests, twice (net9.0 and net10.0): 454 discovered, 446 executed. One
+# .trx per target, so the net10.0 run cannot overwrite the net9.0 one.
+if [ -f "$tmp/r2/$INTEG.net9.0.trx" ] && [ -f "$tmp/r2/$INTEG.net10.0.trx" ] \
+   && [ -f "$tmp/r2/$UNIT.net9.0.trx" ] && [ -f "$tmp/r2/$UNIT.net10.0.trx" ]; then
+    ok "every (assembly, target) pair writes its own .trx"
+else nope "every (assembly, target) pair writes its own .trx" "$(ls "$tmp/r2")"; fi
+if printf '%s' "$out" | grep -q "| \`$INTEG\` · \`net9.0\` | 24 / 28 |" \
+   && printf '%s' "$out" | grep -q "| \`$INTEG\` · \`net10.0\` | 24 / 28 |"; then
+    ok "the report has one row per target"
+else nope "the report has one row per target" "$out"; fi
+if printf '%s' "$out" | grep -q "446 / 454"; then ok "totals count each target once: 446 / 454"
+else nope "totals count each target once: 446 / 454" "$out"; fi
+
+# --- a single-target project (TargetFramework only) is still one lane --------
+write_config "$green_unit" "$INTEG	28	28	24	24	0	4	0"
+out=$(STUB_TFMS="" STUB_TFM="net9.0" STUB_DOCKER_OK=1 run_tests r2b); rc=$?
+if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q "223 / 227" && [ -f "$tmp/r2b/$UNIT.net9.0.trx" ]; then
+    ok "a project with only TargetFramework runs as a single net9.0 lane"
+else nope "a project with only TargetFramework runs as a single net9.0 lane" "$out"; fi
+
 # --- no Docker is never a quiet green --------------------------------------
 write_config "$green_unit" "$INTEG	28	28	24	24	0	4	0"
 out=$(STUB_DOCKER_OK=0 run_tests r3); rc=$?
@@ -142,7 +190,7 @@ else nope "--skip-integration reports 0 / 28 and does not go green" "$out"; fi
 # --- a stale .trx cannot be credited to a lane that did not run ------------
 write_config "$green_unit" "$INTEG	28	28	24	24	0	4	0"
 STUB_DOCKER_OK=1 run_tests r6 >/dev/null 2>&1 || true
-if [ ! -f "$tmp/r6/$INTEG.trx" ]; then
+if [ ! -f "$tmp/r6/$INTEG.net9.0.trx" ]; then
     nope "stale .trx: setup failed, no first-run .trx to go stale"
 else
     out=$(STUB_DOCKER_OK=0 run_tests r6); rc=$?
@@ -157,6 +205,18 @@ out=$(STUB_DOCKER_OK=1 run_tests r7); rc=$?
 if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -q "0 tests discovered"; then
     ok "discovering zero tests in a test project is fatal"
 else nope "discovering zero tests in a test project is fatal" "$out"; fi
+
+# --- a test host that cannot start is a failed discovery, not a count --------
+# Without the .NET 9 runtime, `--list-tests` for net9.0 prints the marker and an
+# exception, exits 0, and its four stack frames would pass for four tests.
+write_config "$green_unit" "$INTEG	28	28	24	24	0	4	0"
+out=$(STUB_NO_RUNTIME=net9.0 STUB_DOCKER_OK=1 run_tests r7b); rc=$?
+if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -q "test host could not start (is the net9.0 runtime installed?)"; then
+    ok "a test host that cannot start fails discovery instead of counting its stack frames"
+else nope "a test host that cannot start fails discovery instead of counting its stack frames" "$out"; fi
+if ! printf '%s' "$out" | grep -q -E "\(net9.0\): [0-9]+$"; then
+    ok "no net9.0 lane reports a discovery count when its runtime is missing"
+else nope "no net9.0 lane reports a discovery count when its runtime is missing" "$out"; fi
 
 echo "test-summary.sh"
 
@@ -202,6 +262,14 @@ out=$(summary s4 "$INTEG	28" "$INTEG	4	four flaky skips"); rc=$?
 if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q "lower it to 2"; then
     ok "under budget: passes and asks for the budget to be tightened"
 else nope "under budget: passes and asks for the budget to be tightened" "$out"; fi
+
+# a three-column row names its target: it reads <Assembly>.<target>.trx and
+# is held to the assembly's budget
+trx s9 "$INTEG.net10.0" 28 24 24 0 4
+out=$(summary s9 "$INTEG	net10.0	28" "$INTEG	4	four flaky skips"); rc=$?
+if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q "| \`$INTEG\` · \`net10.0\` | 24 / 28 |"; then
+    ok "a target-qualified row reads its own .trx and the assembly's budget"
+else nope "a target-qualified row reads its own .trx and the assembly's budget" "$out"; fi
 
 # an unlisted assembly has a budget of zero
 trx s5 "$UNIT" 199 198 198 0 1

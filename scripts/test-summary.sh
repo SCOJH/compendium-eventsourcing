@@ -19,6 +19,11 @@
 # ceiling, not a blanket waiver: adding a new never-run test reddens CI until
 # someone raises the number on purpose and writes down why.
 #
+# An assembly that builds for several targets (net9.0;net10.0 since NET10-01)
+# has one row per target, each read from its own <Assembly>.<target>.trx and
+# each held to the assembly's budget — the same tests run twice, so the same
+# ceiling applies to each run.
+#
 # See docs/TESTING.md.
 
 set -euo pipefail
@@ -31,8 +36,9 @@ usage() {
     cat <<'USAGE'
 Usage: scripts/test-summary.sh [options]
 
-  -r, --results-directory <dir>  Directory holding <Assembly>.trx (default: TestResults)
-      --discovered <file>        TSV of "<assembly>\t<count>" (default: <dir>/discovered.tsv)
+  -r, --results-directory <dir>  Directory holding <Assembly>.<target>.trx (default: TestResults)
+      --discovered <file>        TSV of "<assembly>\t<target>\t<count>" (default: <dir>/discovered.tsv);
+                                 a two-column "<assembly>\t<count>" row reads <Assembly>.trx
       --budget <file>            TSV of "<assembly>\t<max-unrun>\t<reason>"
   -h, --help                     This message
 
@@ -88,9 +94,20 @@ total_discovered=0
 total_executed=0
 total_never_run=0
 
-while IFS=$'\t' read -r assembly discovered; do
+while IFS=$'\t' read -r assembly col2 col3; do
     [ -n "$assembly" ] || continue
-    trx="$results_dir/$assembly.trx"
+    # Three columns name the target; two columns are the single-target form.
+    if [ -n "$col3" ]; then
+        tfm="$col2"; discovered="$col3"
+        trx="$results_dir/$assembly.$tfm.trx"
+        label="\`$assembly\` · \`$tfm\`"
+        name="$assembly ($tfm)"
+    else
+        tfm=""; discovered="$col2"
+        trx="$results_dir/$assembly.trx"
+        label="\`$assembly\`"
+        name="$assembly"
+    fi
 
     executed=0; passed=0; failed=0; skipped=0
     if [ -f "$trx" ]; then
@@ -116,14 +133,14 @@ while IFS=$'\t' read -r assembly discovered; do
     if [ "$never_run" -gt "$budget" ]; then
         gate="**FAIL**"
         gate_failed=1
-        notes+="- \`$assembly\`: $never_run test(s) never ran, budget is $budget."
+        notes+="- \`$name\`: $never_run test(s) never ran, budget is $budget."
         if [ "$not_reached" -gt 0 ]; then
             notes+=" $not_reached of them were never reached by the runner — a filter, or the assembly did not run at all."
         fi
         notes+=$'\n'
     elif [ "$never_run" -gt 0 ]; then
         gate="within budget"
-        notes+="- \`$assembly\`: $never_run test(s) never ran, within a declared budget of $budget"
+        notes+="- \`$name\`: $never_run test(s) never ran, within a declared budget of $budget"
         [ -n "$reason" ] && notes+=" — $reason"
         notes+=$'\n'
         if [ "$never_run" -lt "$budget" ]; then
@@ -133,7 +150,7 @@ while IFS=$'\t' read -r assembly discovered; do
         gate="OK"
     fi
 
-    rows+="| \`$assembly\` | $executed / $discovered | $passed | $failed | $skipped | $not_reached | $gate |"$'\n'
+    rows+="| $label | $executed / $discovered | $passed | $failed | $skipped | $not_reached | $gate |"$'\n'
 
     total_discovered=$(( total_discovered + discovered ))
     total_executed=$(( total_executed + executed ))
@@ -146,9 +163,9 @@ if [ -z "$rows" ]; then
 fi
 
 report=$(cat <<REPORT
-## Tests executed, by assembly
+## Tests executed, by assembly and target
 
-| Assembly | Executed / discovered | Passed | Failed | Skipped | Not reached | Gate |
+| Assembly · target | Executed / discovered | Passed | Failed | Skipped | Not reached | Gate |
 |---|---:|---:|---:|---:|---:|---|
 ${rows}| **Total** | **$total_executed / $total_discovered** | | | | **$total_never_run never ran** | |
 

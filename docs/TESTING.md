@@ -37,9 +37,12 @@ both cases.
 2. **Discovery.** For each test project, `dotnet test --list-tests` counts what
    the assembly *contains*. This count is independent of any `--filter`, which
    is what makes a filter visible instead of invisible.
-3. **Run.** Every test project runs unfiltered, each with its own `.trx`, so
-   counts can be attributed per assembly. A failing lane does not abort the
-   loop — the report is worth more than a fast exit — but it does fail the run.
+3. **Run.** Every test project runs unfiltered, once per target framework
+   (`net9.0` and `net10.0` since NET10-01 — the targets are read from the
+   project, not assumed), each (assembly, target) pair with its own `.trx`, so
+   counts can be attributed per assembly and target. A failing lane does not
+   abort the loop — the report is worth more than a fast exit — but it does fail
+   the run.
 4. **Report and gate.** `scripts/test-summary.sh` compares discovery against the
    `.trx` counters and writes the table below to stdout and to
    `$GITHUB_STEP_SUMMARY`.
@@ -54,12 +57,15 @@ bash scripts/selftest.sh                        # test the harness itself
 
 ## Reading the report
 
-| Assembly | Executed / discovered | Passed | Failed | Skipped | Not reached | Gate |
+| Assembly · target | Executed / discovered | Passed | Failed | Skipped | Not reached | Gate |
 |---|---:|---:|---:|---:|---:|---|
-| `Compendium.Adapters.PostgreSQL.Tests` | 199 / 199 | 199 | 0 | 0 | 0 | OK |
-| `Compendium.Adapters.PostgreSQL.IntegrationTests` | 24 / 28 | 24 | 0 | 4 | 0 | within budget |
+| `Compendium.Adapters.PostgreSQL.Tests` · `net9.0` | 199 / 199 | 199 | 0 | 0 | 0 | OK |
+| `Compendium.Adapters.PostgreSQL.Tests` · `net10.0` | 199 / 199 | 199 | 0 | 0 | 0 | OK |
+| `Compendium.Adapters.PostgreSQL.IntegrationTests` · `net9.0` | 24 / 28 | 24 | 0 | 4 | 0 | within budget |
+| `Compendium.Adapters.PostgreSQL.IntegrationTests` · `net10.0` | 24 / 28 | 24 | 0 | 4 | 0 | within budget |
 
-*(Illustrative shape. The real numbers come from the run.)*
+*(Illustrative shape. The real numbers come from the run. One row per target:
+the same tests run once per runtime.)*
 
 | Column | Meaning |
 |---|---|
@@ -81,7 +87,9 @@ a figure, not a silence.
 ```
 
 An assembly absent from the file has a budget of 0: every test it contains must
-run, or CI goes red. A budget is a ceiling, not a waiver — adding a test that
+run, or CI goes red. The budget is per assembly and holds for each of its
+targets separately — the same tests run once per runtime, so the same ceiling
+applies to each run. A budget is a ceiling, not a waiver — adding a test that
 cannot run reddens CI until someone raises the number deliberately and writes
 why in that third column. Lowering it is always safe, and the summary points out
 when reality is better than the budget.
