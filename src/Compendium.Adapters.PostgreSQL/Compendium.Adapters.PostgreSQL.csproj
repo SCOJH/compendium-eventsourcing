@@ -30,4 +30,23 @@
     <PackageReference Include="Npgsql" />
   </ItemGroup>
 
+  <!-- NET10-01: on net10.0 only, a direct reference the code does not need, to
+       settle a transitive downgrade NuGet refuses (NU1605, an error).
+
+       Compendium.Infrastructure 1.0.5-preview.5 ships net9.0 assets only and asks
+       for Microsoft.Extensions.Hosting.Abstractions >= 9.0.19; its own dependency
+       OpenTelemetry.Extensions.Hosting 1.18.0 asks, in its net10.0 group, for
+       >= 10.0.0. The nearer request (9.0.19) would win and NuGet reports the
+       downgrade. Referencing the package here puts the per-target pin from
+       Directory.Packages.props (10.0.12) nearest, and the graph is consistent.
+       The net9.0 target does not need it — OpenTelemetry's net9.0 group asks for
+       9.0.0 — and its nuspec group stays as before.
+
+       Remove once the Compendium packages ship a net10.0 target themselves
+       (SCOJH/Compendium#178 is merged; it awaits publication), since
+       Compendium.Infrastructure will then ask for 10.0.x in its own net10.0 group. -->
+  <ItemGroup Condition="'$(TargetFramework)' == 'net10.0'">
+    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" />
+  </ItemGroup>
+
 </Project>

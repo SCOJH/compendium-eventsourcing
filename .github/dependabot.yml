@@ -11,10 +11,20 @@ updates:
     open-pull-requests-limit: 10
     labels:
       - "dependencies"
+    # NET10-01 — Directory.Packages.props pins Microsoft.Extensions.* once per
+    # target: 9.0.x for net9.0, 10.0.x for net10.0. Patch bumps stay welcome on
+    # both lines; a major bump would move the net9.0 line onto 10.x, which is the
+    # drift this ticket undid. Lift this together with the net9.0 target.
+    ignore:
+      - dependency-name: "Microsoft.Extensions.*"
+        update-types: ["version-update:semver-major"]
     groups:
       compendium-framework:
         patterns:
           - "Compendium.*"
+      microsoft-extensions:
+        patterns:
+          - "Microsoft.Extensions.*"
 
   # GitHub Actions
   - package-ecosystem: "github-actions"

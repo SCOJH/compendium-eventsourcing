@@ -41,6 +41,15 @@ tests/
 
 ## Build & test
 
+The package targets `net9.0` and `net10.0` (NET10-01; `net9.0` stays for the
+transition and leaves with .NET 9 support on 2026-11-10). The repository builds
+with the .NET 10 SDK pinned by `global.json` (10.0.100 or any later 10.0 feature
+band), which compiles both targets; running the `net9.0` half of the tests also
+needs the .NET 9 runtimes (`Microsoft.NETCore.App` and `Microsoft.AspNetCore.App`,
+which the test hosts ask for through `Compendium.Infrastructure`), which the
+.NET 9 SDK brings — CI installs both SDKs. Consumers need neither: the package
+carries `lib/net9.0` and `lib/net10.0`.
+
 ```bash
 dotnet build -c Release
 
@@ -55,7 +64,7 @@ bash scripts/run-tests.sh --no-build
 bash scripts/run-tests.sh --no-build --skip-integration
 ```
 
-Each run prints, per assembly, how many of the tests it contains actually ran. Tests that did not run are a number in the summary, capped per assembly by `tests/unrun-budget.tsv` — not a silence behind a green check. See [`docs/TESTING.md`](docs/TESTING.md).
+Each run prints, per assembly and target, how many of the tests it contains actually ran — every test project runs once on .NET 9 and once on .NET 10. Tests that did not run are a number in the summary, capped per assembly by `tests/unrun-budget.tsv` — not a silence behind a green check. See [`docs/TESTING.md`](docs/TESTING.md).
 
 CI gates on unit-test line coverage (≥ 35% — the raw Npgsql/Dapper I/O surface is only exercised meaningfully by the integration suite; see the comment in `.github/workflows/ci.yml`).
 
