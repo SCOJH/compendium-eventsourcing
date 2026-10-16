@@ -46,7 +46,9 @@
        (SCOJH/Compendium#178 is merged; it awaits publication), since
        Compendium.Infrastructure will then ask for 10.0.x in its own net10.0 group. -->
   <ItemGroup Condition="'$(TargetFramework)' == 'net10.0'">
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
     <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.Logging" />
   </ItemGroup>
 
 </Project>
