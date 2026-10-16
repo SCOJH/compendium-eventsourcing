@@ -6,10 +6,10 @@
   <!-- Compendium framework — pin to a published NuGet version. Update via Renovate.
        These packages ship net9.0 assets only; net10.0 consumes them as such. -->
   <ItemGroup>
-    <PackageVersion Include="Compendium.Abstractions" Version="1.0.5-preview.5" />
-    <PackageVersion Include="Compendium.Core" Version="1.0.5-preview.5" />
-    <PackageVersion Include="Compendium.Infrastructure" Version="1.0.5-preview.5" />
-    <PackageVersion Include="Compendium.Multitenancy" Version="1.0.5-preview.5" />
+    <PackageVersion Include="Compendium.Abstractions" Version="1.0.5-preview.8" />
+    <PackageVersion Include="Compendium.Core" Version="1.0.5-preview.8" />
+    <PackageVersion Include="Compendium.Infrastructure" Version="1.0.5-preview.8" />
+    <PackageVersion Include="Compendium.Multitenancy" Version="1.0.5-preview.8" />
   </ItemGroup>
 
   <!-- Build-time tooling -->
@@ -62,11 +62,11 @@
        Options.DataAnnotations) are removed rather than duplicated per target:
        without transitive pinning they had no effect on any graph. -->
   <ItemGroup Condition="'$(TargetFramework)' == 'net9.0'">
-    <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="9.0.19" />
+    <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="9.0.20" />
     <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="9.0.19" />
     <PackageVersion Include="Microsoft.Extensions.Logging" Version="9.0.19" />
-    <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="9.0.19" />
-    <PackageVersion Include="Microsoft.Extensions.Options" Version="9.0.19" />
+    <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="9.0.20" />
+    <PackageVersion Include="Microsoft.Extensions.Options" Version="9.0.20" />
   </ItemGroup>
   <ItemGroup Condition="'$(TargetFramework)' == 'net10.0'">
     <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.12" />
